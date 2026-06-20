@@ -96,7 +96,7 @@ void AMonsterBase::Tick(float DeltaTime)
             CurrentMonster.CurrentVelocityDir = TargetMoveDirection;
         }
 
-        // 【核心优化 2：向量插值平滑（终极防抖魔法）】
+        // 【向量插值平滑（终极防抖魔法）】
         // 不要直接把新的计算结果塞给怪物，而是让怪物当前的移动方向“缓慢平滑地”偏向目标方向。
         // 参数 8.0f 是平滑速度（InterpSpeed），值越小转向越迟钝（像开船），值越大转向越快（容易抖）。你可以微调这个值。
         CurrentMonster.CurrentVelocityDir = FMath::VInterpTo(CurrentMonster.CurrentVelocityDir, TargetMoveDirection, DeltaTime, 8.0f).GetSafeNormal2D();

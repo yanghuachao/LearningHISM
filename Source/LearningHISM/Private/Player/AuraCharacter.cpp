@@ -1,4 +1,4 @@
-// Fill out your copyright notice in the Description page of Project Settings.
+﻿// Fill out your copyright notice in the Description page of Project Settings.
 
 
 #include "Player/AuraCharacter.h"
@@ -11,6 +11,7 @@
 #include "Fireball/Fireball.h"
 #include "Character/MonsterBase.h"
 #include "Kismet/GameplayStatics.h"
+#include "Components/SkeletalMeshComponent.h"
 
 class UEnhancedInputLocalPlayerSubsystem;
 // Sets default values
@@ -54,6 +55,9 @@ AAuraCharacter::AAuraCharacter()
 	Weapon->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	
 	Weapon->SetupAttachment(GetMesh(), WeaponSocketName);
+	
+	MuzzlePoint = CreateDefaultSubobject<USceneComponent>(TEXT("MuzzlePoint"));
+	MuzzlePoint->SetupAttachment(Weapon);
 }
 
 // Called when the game starts or when spawned
@@ -210,39 +214,42 @@ void AAuraCharacter::SwitchNextSkill(const FInputActionValue& Value)
 
 void AAuraCharacter::Attack(const FInputActionValue& Value)
 {
-	// 如果没有装备武器，直接返回（去掉对 FireballClass 的检查，因为我们现在用数组了）
+	
+	if (bIsAutoCasting) {
+		bIsAutoCasting = false;
+	}
+	
 	if (!Weapon) return;
 
-	// 检查：当前选中的技能索引是否在数组范围内（防止越界崩溃）
 	if (EquippedManualSkills.IsValidIndex(CurrentManualSkillIndex))
 	{
-		// 从数组中拿到当前选中的那个技能
 		FAutoSkillData& Skill = EquippedManualSkills[CurrentManualSkillIndex];
 
-		// 检查：这个技能是否配置了子弹类，并且 冷却时间已经归零！
 		if (Skill.SkillClass && Skill.CurrentTimer <= 0.0f)
 		{
-			// 1. 存入暂存区，交给后续执行
-			PendingSkill = Skill; 
+			// 1. 拿鼠标点的世界坐标
+			PendingSkillTargetLocation = GetMouseTargetLocation();
 
-			// 2. 播放专属攻击动画
+			// 2. 让人物面朝鼠标点（俯视为准，只转 Yaw）
+			FRotator LookAtRot = (PendingSkillTargetLocation - GetActorLocation()).Rotation();
+			SetActorRotation(FRotator(0.f, LookAtRot.Yaw, 0.f));
+
+			// 3. 存技能、播动画
+			PendingSkill = Skill;
 			if (Skill.SkillAnimMontage && GetMesh() && GetMesh()->GetAnimInstance())
 			{
 				GetMesh()->GetAnimInstance()->Montage_Play(Skill.SkillAnimMontage);
 			}
 			else
 			{
-				// 如果这个技能没配动画，直接瞬间发射
-				ExecuteSkillSpawn(); 
+				ExecuteSkillSpawn();
 			}
 
-			// 3. 【极其重要】重置这个技能的冷却时间
 			Skill.CurrentTimer = Skill.Cooldown;
 		}
 		else if (Skill.CurrentTimer > 0.0f)
 		{
-			// 如果玩家狂点鼠标，但技能还在冷却中，可以在这里加提示
-			if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 0.5f, FColor::Red, TEXT("技能正在冷却中！"));
+			if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 0.5f, FColor::Red, TEXT("技能正在冷却中"));
 		}
 	}
 }
@@ -269,55 +276,97 @@ void AAuraCharacter::ExecuteSkillSpawn()
 	// 1. 获取怪物管理器
 	AMonsterBase* MonsterManager = Cast<AMonsterBase>(UGameplayStatics::GetActorOfClass(GetWorld(), AMonsterBase::StaticClass()));
 
-	// 2. 获取武器插槽的位置（使用你的 Weapon 组件）
-	FVector SpawnLocation = GetActorLocation();
-	if (Weapon && Weapon->DoesSocketExist(PendingSkill.SpawnSocketName))
-	{
-		SpawnLocation = Weapon->GetSocketLocation(PendingSkill.SpawnSocketName);
-	}
+	// 1. 位置从枪口出
+	FVector SpawnLocation = MuzzlePoint->GetComponentLocation();
 
-	// 3. 默认发射方向：人物当前的正前方
-	FRotator SpawnRotation = GetActorForwardVector().Rotation();
+	// 2. 决定目标点：复用你已有的 bIsAutoCasting
+	FVector TargetLocation = FVector::ZeroVector;
+	bool bHasTarget = false;
 
 	// 4. 寻找最近怪物，计算发射方向（不需要强行扭转人物身体，保证走位丝滑）
-	if (MonsterManager)
+	if (bIsAutoCasting && MonsterManager)
 	{
-		float ClosestDistSq = MAX_flt; 
-		FVector TargetLocation = FVector::ZeroVector;
-		bool bFoundTarget = false;
-
+		const float MaxRangeSq = AutoAttackRange * AutoAttackRange;
+		// 自动模式：找最近的活怪物
+		float ClosestDistSq = MAX_flt;
 		for (const FMonsterData& Monster : MonsterManager->MonsterDataArray)
 		{
-			if (Monster.bIsAlive)
+			if (!Monster.bIsAlive) continue;
+
+			// 用人物中心点算距离，平方比较省一次开方
+			float DistSq = FVector::DistSquared(GetActorLocation(), Monster.Location);
+			if (DistSq > MaxRangeSq) continue; // 超出范围，不考虑
+
+			if (DistSq < ClosestDistSq)
 			{
-				float DistSq = FVector::DistSquared2D(SpawnLocation, Monster.Location);
-				if (DistSq < ClosestDistSq)
-				{
-					ClosestDistSq = DistSq;
-					TargetLocation = Monster.Location;
-					bFoundTarget = true;
-				}
+				ClosestDistSq = DistSq;
+				TargetLocation = Monster.Location;
+				bHasTarget = true;
 			}
 		}
-
-		if (bFoundTarget)
-		{
-			FVector Direction = (TargetLocation - SpawnLocation).GetSafeNormal2D();
-			SpawnRotation = Direction.Rotation();
-			// 不调用 SetActorRotation，让人物保持移动方向，但火球瞄准怪物
-		}
+		// 可视化范围圈（验证用，确认后可以删掉）
+		DrawDebugCircle(
+			GetWorld(),
+			GetActorLocation() - FVector(0, 0, GetActorLocation().Z), // 贴地
+			AutoAttackRange,
+			32, FColor::Cyan, false, 0.5f, 0, 2.f,
+			FVector(1, 0, 0), FVector(0, 1, 0), false
+		);
+	}
+	else
+	{
+		// 手动模式：用鼠标点击的目标
+		TargetLocation = PendingSkillTargetLocation;
+		bHasTarget = true;
 	}
 
+	if (!bHasTarget)
+	{
+		TargetLocation = GetActorLocation() + GetActorForwardVector() * 1000.f;
+	}
+
+	// 4. 朝向
+	FVector FlatDirection = TargetLocation - SpawnLocation;
+	FlatDirection.Z = 0.f;
+	FlatDirection = FlatDirection.GetSafeNormal();
+	FRotator SpawnRotation = FlatDirection.Rotation();
+
+	// 5. 调试可视化
+	DrawDebugSphere(GetWorld(), SpawnLocation, 25.f, 16, FColor::Red, false, 2.f);
+	DrawDebugLine(GetWorld(), SpawnLocation, TargetLocation, FColor::Green, false, 2.f, 0, 5.f);
+
+	
 	// 5. 在世界中生成火球（或冰锥、闪电等）
 	FActorSpawnParameters SpawnParams;
 	SpawnParams.Owner = this;
 	SpawnParams.Instigator = this;
 	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-
 	GetWorld()->SpawnActor<AActor>(PendingSkill.SkillClass, SpawnLocation, SpawnRotation, SpawnParams);
 
 	// 6. 发射完毕，清空暂存区
 	PendingSkill.SkillClass = nullptr;
 }
 
+FVector AAuraCharacter::GetMouseTargetLocation() const
+{
+	APlayerController* PC = Cast<APlayerController>(GetController());
+	if (!PC) return GetActorLocation() + GetActorForwardVector() * 1000.f;
+
+	// 1. 优先：鼠标命中场景里某个物体
+	FHitResult HitResult;
+	if (PC->GetHitResultUnderCursor(ECC_Visibility, false, HitResult))
+	{
+		return HitResult.ImpactPoint;
+	}
+
+	// 2. 没命中：沿鼠标射线方向推 5000 单位
+	FVector WorldOrigin, WorldDirection;
+	if (PC->DeprojectMousePositionToWorld(WorldOrigin, WorldDirection))
+	{
+		return WorldOrigin + WorldDirection * 5000.f;
+	}
+
+	// 3. 最后兜底：人物前方 1000
+	return GetActorLocation() + GetActorForwardVector() * 1000.f;
+}
 

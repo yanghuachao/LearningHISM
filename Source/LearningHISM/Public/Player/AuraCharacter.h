@@ -78,6 +78,10 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Combat")
 	TSubclassOf<AFireball> FireballClass; // 暴露给蓝图，用于选择要发射哪个火球蓝图
 	
+	// 自动攻击的搜索范围
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Combat")
+	float AutoAttackRange = 1500.f;
+	
 	// --- 自动施法系统 ---
 
 	// 按下 R 键触发的输入操作
@@ -107,10 +111,11 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat")
 	int32 CurrentManualSkillIndex = 0;
 	
-	/*// 切换技能的功能函数
-	void SwitchToNextSkill(); // 切到下一个技能（适合鼠标滚轮向下）
-	void SwitchToPrevSkill(); // 切到上一个技能（适合鼠标滚轮向上
-	*/
+	// 鼠标点击瞄准的目标位置
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat")
+	FVector PendingSkillTargetLocation = FVector::ZeroVector;
+	
+	
 	
 	// 弹簧臂组件（控制相机的距离和角度）
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera", meta = (AllowPrivateAccess = "true"))
@@ -123,6 +128,10 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat")
 	UStaticMeshComponent* Weapon;
 	
+	//用于火球的生成
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat")
+	USceneComponent* MuzzlePoint;
+	
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat")
 	FName WeaponSocketName = FName("WeaponSocket");
 	
@@ -134,6 +143,9 @@ public:
 	
 	void Attack(const FInputActionValue& Value); // 攻击执行函数
 	
+	// Called to bind functionality to input
+	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
+	
 	// 切换技能的实现函数
 	void SwitchPrevSkill(const FInputActionValue& Value);
 	void SwitchNextSkill(const FInputActionValue& Value);
@@ -142,7 +154,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Combat")
 	void ExecuteSkillSpawn();
 	
-	// Called to bind functionality to input
-	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
+	// 鼠标拾取世界坐标的辅助函数
+	FVector GetMouseTargetLocation() const;
+	
+	
 
 };
