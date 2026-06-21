@@ -35,6 +35,10 @@ struct FMonsterData
     }
 };
 
+// 怪物死亡时广播：位置 + 经验奖励（外部 XPGemManager 订阅）
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnMonsterDied, FVector, Location, float, XPReward);
+
+
 UCLASS()
 class LEARNINGHISM_API AMonsterBase : public AActor
 {
@@ -71,5 +75,10 @@ public:
 	void SpawnMonsters(int32 Count, FVector SpawnOrigin, float Radius);
 
 	// 获取玩家引用，用于让怪物追踪
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat")
 	AActor* PlayerTarget;
+	
+	//加上死亡委托
+	UPROPERTY(BlueprintAssignable, Category = "Combat")
+	FOnMonsterDied OnMonsterDied;
 };

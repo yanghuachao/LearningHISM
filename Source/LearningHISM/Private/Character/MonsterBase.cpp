@@ -147,7 +147,7 @@ void AMonsterBase::SpawnMonsters(int32 Count, FVector SpawnOrigin, float Radius)
 			TargetIndex = MonsterDataArray.Add(FMonsterData());
 		}
 
-		// 3. 计算边缘生成位置
+		/*// 3. 计算边缘生成位置
 		float RandomAngle = FMath::FRandRange(0.0f, 2.0f * PI);
 		// 在设定半径的基础上加一点随机扰动，防止怪物生在完美的圆圈上
 		float FinalRadius = Radius + FMath::FRandRange(0.0f, 300.0f); 
@@ -157,8 +157,37 @@ void AMonsterBase::SpawnMonsters(int32 Count, FVector SpawnOrigin, float Radius)
 		Offset.Y = FMath::Sin(RandomAngle) * FinalRadius;
 		Offset.Z = 0.0f; // 保持在地面高度
 
-		FVector SpawnLocation = SpawnOrigin + Offset;
+		FVector SpawnLocation = SpawnOrigin + Offset;*/
 
+		// 3) 计算边缘生成位置（先算出 X/Y 平面上的随机点）
+		float RandomAngle = FMath::FRandRange(0.0f, 2.0f * PI);
+		float FinalRadius = Radius + FMath::FRandRange(0.0f, 300.0f);
+
+		FVector HorizontalOffset;
+		HorizontalOffset.X = FMath::Cos(RandomAngle) * FinalRadius;
+		HorizontalOffset.Y = FMath::Sin(RandomAngle) * FinalRadius;
+		HorizontalOffset.Z = 0.0f;
+
+		FVector ProbeLocation = SpawnOrigin + HorizontalOffset;
+
+		// ↓↓↓ 新增：从天上往地下打一条线，找地面真实高度 ↓↓↓
+		FVector SpawnLocation = ProbeLocation;
+		FHitResult GroundHit;
+		FCollisionQueryParams GroundParams;
+		GroundParams.AddIgnoredActor(this);
+		const FVector TraceStart = ProbeLocation + FVector(0.f, 0.f, 5000.f); // 起点抬高 5000
+		const FVector TraceEnd   = ProbeLocation - FVector(0.f, 0.f, 5000.f); // 终点压低 5000
+		if (GetWorld()->LineTraceSingleByChannel(GroundHit, TraceStart, TraceEnd, ECC_WorldStatic, GroundParams))
+		{
+			// 命中地面：把怪物 Z 钉在地面 + 一点点抬升（防止脚陷地里）
+			SpawnLocation.Z = GroundHit.ImpactPoint.Z + 10.0f;  // 50 是怪物模型半高，按你的 mesh 调
+		}
+		else
+		{
+			// 没找到地面：兜底用玩家 Z（你原来的行为，至少不崩）
+			SpawnLocation.Z = SpawnOrigin.Z;
+		}
+		
 		// 4. 初始化怪物数据
 		MonsterDataArray[TargetIndex].Location = SpawnLocation;
 		MonsterDataArray[TargetIndex].Rotation = (SpawnOrigin - SpawnLocation).Rotation(); // 朝向玩家
@@ -207,6 +236,12 @@ void AMonsterBase::ApplyDamageToMonsters(FVector HitLocation, float HitRadius, f
 					// 标记死亡
 					MonsterDataArray[i].bIsAlive = false;
                     
+					// 死亡时广播，让 XPGemManager 在死亡位置生成宝石
+					OnMonsterDied.Broadcast(MonsterDataArray[i].Location, 5.0f);
+					
+					if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red,
+	FString::Printf(TEXT("[Monster Died] at %s"), *MonsterDataArray[i].Location.ToString()));
+					
 					// 【假装销毁】将其 Transform 移动到地下极深处，缩放清零
 					FTransform DeadTransform;
 					DeadTransform.SetLocation(FVector(0.0f, 0.0f, -10000.0f));

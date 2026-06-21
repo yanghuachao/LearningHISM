@@ -17,7 +17,8 @@ AFireball::AFireball()
 	// 1. 设置球形碰撞体为主组件
 	SphereComp = CreateDefaultSubobject<USphereComponent>(TEXT("SphereComp"));
 	RootComponent = SphereComp;
-	SphereComp->InitSphereRadius(15.0f);
+	SphereComp->InitSphereRadius(40.0f);
+	SphereComp->SetUseCCD(true);
 	SphereComp->SetCollisionProfileName(TEXT("BlockAllDynamic")); // 碰到动态物体产生拦截
 	SphereComp->SetGenerateOverlapEvents(true); // 开启重叠事件
 
