@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "InputMappingContext.h"
+#include "Character/MonsterBase.h"
 #include "Fireball/Fireball.h"
 #include "GameFramework/Character.h"
 #include "AuraCharacter.generated.h"
@@ -11,6 +12,12 @@
 class USpringArmComponent; // 新增
 class UCameraComponent;    // 新增
 
+
+// 血量变化时广播：UI 监听
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnHealthChanged, float, CurrentHealth, float, MaxHealth);
+
+// 死亡时广播：GameMode/UI 监听（只触发一次）
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnPlayerDied);
 
 // ==========================================
 // 自动技能数据结构体
@@ -95,6 +102,40 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat")
 	bool bIsAutoCasting = false;
 	
+	// --- 战斗参数（继续） ---
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat")
+	float MaxHealth = 100.0f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat")
+	float CurrentHealth = 100.0f;
+
+	// 怪物接触玩家时，单次扣多少血
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Combat", meta = (ClampMin = "0.0"))
+	float ContactDamage = 50.0f;
+
+	// 两次接触伤害之间至少隔多久（秒）—— 防止 60FPS 下每帧都扣血秒死
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Combat", meta = (ClampMin = "0.0"))
+	float ContactDamageCooldown = 0.5f;
+
+	// 怪物和玩家距离 < 这个值就算"接触"
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Combat", meta = (ClampMin = "0.0"))
+	float ContactRadius = 60.0f;
+
+	// 死亡标志：true 后禁用输入、停移动
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat")
+	bool bIsDead = false;
+
+	// ---- 委托 ----
+
+	UPROPERTY(BlueprintAssignable, Category = "Combat")
+	FOnHealthChanged OnHealthChanged;
+
+	UPROPERTY(BlueprintAssignable, Category = "Combat")
+	FOnPlayerDied OnPlayerDied;
+
+	// ---- 输入 ----
+
 	// 核心：角色当前拥有的自动技能列表！
 	// 以后只要往这个数组里加东西，角色就会自动发射各种新技能
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat")
@@ -135,6 +176,20 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat")
 	FName WeaponSocketName = FName("WeaponSocket");
 	
+	
+	// ---- 死亡动画 ----
+
+	// 死亡时播放的动画蒙太奇（设计师在 BP_AuraCharacter 里指定）
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat")
+	TObjectPtr<UAnimMontage> DeathMontage = nullptr;
+
+	// 死亡动画兜底时长：超过这个秒数无论动画是否结束都强制退出
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Combat", meta = (ClampMin = "0.1"))
+	float DeathAnimationDuration = 2.0f;
+	
+	// 防止 Montage 结束回调 和 兜底定时器 都触发，导致 QuitGame 调 2 次
+	bool bHasQuitted = false;
+	
 public:	
 	// Called every frame
 	virtual void Tick(float DeltaTime) override;
@@ -156,6 +211,28 @@ public:
 	
 	// 鼠标拾取世界坐标的辅助函数
 	FVector GetMouseTargetLocation() const;
+	
+	// ---- 方法 ----
+
+	// 接受伤害（被怪物接触、外部调用都行）
+	UFUNCTION(BlueprintCallable, Category = "Combat")
+	void TakeDamage(float Amount);
+
+	// 死亡处理（TakeDamage 内部调用一次）
+	void Die();
+	
+	// 死亡动画结束回调（被 Montage_SetEndDelegate 调用）
+	void HandleDeathFinished(UAnimMontage* Montage, bool bInterrupted);
+
+	// 兜底定时器到期回调（无参，给 SetTimer 用）
+	void OnDeathTimerExpired();
+
+	// 内部：缓存 MonsterManager 引用，避免每帧 GetActorOfClass
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat")
+	TWeakObjectPtr<AMonsterBase> CachedMonsterManager;
+
+	// 内部：接触伤害 CD 计时器
+	float ContactDamageTimer = 0.0f;
 	
 	
 

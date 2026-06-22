@@ -2,16 +2,18 @@
 
 
 #include "Player/AuraCharacter.h"
-
+#include "Animation/AnimInstance.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
 #include "Camera/CameraComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/SpringArmComponent.h"
-#include "Fireball/Fireball.h"
+#include "Kismet/KismetSystemLibrary.h"
 #include "Character/MonsterBase.h"
 #include "Kismet/GameplayStatics.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Animation/AnimMontage.h"
+#include "TimerManager.h"
 
 class UEnhancedInputLocalPlayerSubsystem;
 // Sets default values
@@ -58,6 +60,9 @@ AAuraCharacter::AAuraCharacter()
 	
 	MuzzlePoint = CreateDefaultSubobject<USceneComponent>(TEXT("MuzzlePoint"));
 	MuzzlePoint->SetupAttachment(Weapon);
+	
+	// 初始化满血
+	CurrentHealth = MaxHealth;
 }
 
 // Called when the game starts or when spawned
@@ -77,61 +82,82 @@ void AAuraCharacter::BeginPlay()
 			}
 		}
 	}
+	
+	// 缓存 MonsterManager 引用，接触检测每帧用
+	if (AMonsterBase* MonsterMgr = Cast<AMonsterBase>(
+			UGameplayStatics::GetActorOfClass(GetWorld(), AMonsterBase::StaticClass())))
+	{
+		CachedMonsterManager = MonsterMgr;
+	}
 }
 
 // Called every frame
 void AAuraCharacter::Tick(float DeltaTime)
 {
-	Super::Tick(DeltaTime);
-	
-	// 1. 全局冷却系统：所有“手动技能”的冷却倒计时
-	for (int32 i = 0; i < EquippedManualSkills.Num(); ++i)
-	{
-		if (EquippedManualSkills[i].CurrentTimer > 0.0f)
-		{
-			EquippedManualSkills[i].CurrentTimer -= DeltaTime;
-		}
-	}
+    Super::Tick(DeltaTime);
 
-	// 2. 全局冷却系统：所有“自动技能”的冷却倒计时
-	for (int32 i = 0; i < EquippedAutoSkills.Num(); ++i)
-	{
-		if (EquippedAutoSkills[i].CurrentTimer > 0.0f)
-		{
-			EquippedAutoSkills[i].CurrentTimer -= DeltaTime;
-		}
-	}
+    // ★ 死亡后所有战斗逻辑停掉
+    if (bIsDead) return;
 
-	// ==========================================
-	// 2. 自动施法触发逻辑
-	// ==========================================
-	if (bIsAutoCasting)
-	{
-		for (int32 i = 0; i < EquippedAutoSkills.Num(); ++i)
-		{
-			FAutoSkillData& Skill = EquippedAutoSkills[i];
-			if (!Skill.SkillClass) continue;
+    // 1. 全局冷却系统：所有"手动技能"的冷却倒计时
+    for (int32 i = 0; i < EquippedManualSkills.Num(); ++i)
+    {
+        if (EquippedManualSkills[i].CurrentTimer > 0.0f)
+        {
+            EquippedManualSkills[i].CurrentTimer -= DeltaTime;
+        }
+    }
 
-			// 如果冷却完毕
-			if (Skill.CurrentTimer <= 0.0f)
-			{
-				PendingSkill = Skill;
+    // 2. 全局冷却系统：所有"自动技能"的冷却倒计时
+    for (int32 i = 0; i < EquippedAutoSkills.Num(); ++i)
+    {
+        if (EquippedAutoSkills[i].CurrentTimer > 0.0f)
+        {
+            EquippedAutoSkills[i].CurrentTimer -= DeltaTime;
+        }
+    }
 
-				if (Skill.SkillAnimMontage && GetMesh() && GetMesh()->GetAnimInstance())
-				{
-					GetMesh()->GetAnimInstance()->Montage_Play(Skill.SkillAnimMontage);
-				}
-				else
-				{
-					ExecuteSkillSpawn(); 
-				}
+    // 3. 自动施法触发逻辑（保留你原有代码）
+    if (bIsAutoCasting)
+    {
+        for (int32 i = 0; i < EquippedAutoSkills.Num(); ++i)
+        {
+            FAutoSkillData& Skill = EquippedAutoSkills[i];
+            if (!Skill.SkillClass) continue;
+            if (Skill.CurrentTimer <= 0.0f)
+            {
+                PendingSkill = Skill;
+                if (Skill.SkillAnimMontage && GetMesh() && GetMesh()->GetAnimInstance())
+                {
+                    GetMesh()->GetAnimInstance()->Montage_Play(Skill.SkillAnimMontage);
+                }
+                else
+                {
+                    ExecuteSkillSpawn();
+                }
+                Skill.CurrentTimer = Skill.Cooldown;
+                break;
+            }
+        }
+    }
 
-				// 重置自动技能的冷却
-				Skill.CurrentTimer = Skill.Cooldown;
-				break; 
-			}
-		}
-	}
+    // ★ 4. 接触伤害检测：怪物离玩家够近就扣血（带 CD 防止秒死）
+    ContactDamageTimer = FMath::Max(0.0f, ContactDamageTimer - DeltaTime);
+    if (ContactDamageTimer <= 0.0f && CachedMonsterManager.IsValid())
+    {
+        const float ContactRadiusSq = ContactRadius * ContactRadius;
+        const FVector MyLocation = GetActorLocation();
+        for (const FMonsterData& Monster: CachedMonsterManager->MonsterDataArray)
+        {
+            if (!Monster.bIsAlive) continue;
+            if (FVector::DistSquared2D(MyLocation, Monster.Location) <= ContactRadiusSq)
+            {
+                TakeDamage(ContactDamage);
+                ContactDamageTimer = ContactDamageCooldown;
+                break; // 一帧只吃一个怪的伤，避免团灭
+            }
+        }
+    }
 }
 
 // Called to bind functionality to input
@@ -370,3 +396,90 @@ FVector AAuraCharacter::GetMouseTargetLocation() const
 	return GetActorLocation() + GetActorForwardVector() * 1000.f;
 }
 
+void AAuraCharacter::TakeDamage(float Amount)
+{
+	if (bIsDead || Amount <= 0.0f) return;
+
+	CurrentHealth = FMath::Max(0.0f, CurrentHealth - Amount);
+	OnHealthChanged.Broadcast(CurrentHealth, MaxHealth);
+
+	if (CurrentHealth <= 0.0f)
+	{
+		Die();
+	}
+}
+
+void AAuraCharacter::Die()
+{
+	if (bIsDead) return; // 防止多次调用
+	bIsDead = true;
+	bHasQuitted = false;
+
+	// 停移动
+	if (GetCharacterMovement())
+	{
+		GetCharacterMovement()->StopMovementImmediately();
+		GetCharacterMovement()->DisableMovement();
+	}
+
+	// 关自动施法
+	bIsAutoCasting = false;
+
+	APlayerController* PC = Cast<APlayerController>(GetController());
+	if (PC)
+	{
+		DisableInput(PC);
+	}
+
+	// 屏显 GAME OVER
+	if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Red,
+			TEXT("=== GAME OVER ==="));
+	}
+
+	// 广播
+	OnPlayerDied.Broadcast();
+
+	// ★ 死亡动画：有 DeathMontage 就播 + 等结束；没就立刻退出
+	USkeletalMeshComponent* MeshComp = GetMesh();
+	UAnimInstance* AnimInst = MeshComp ? MeshComp->GetAnimInstance() : nullptr;
+
+	if (DeathMontage && AnimInst)
+	{
+		// 1) 结束回调：动画播完（或被打断）后调
+		FOnMontageEnded EndDelegate;
+		EndDelegate.BindUObject(this, &AAuraCharacter::HandleDeathFinished);
+		AnimInst->Montage_Play(DeathMontage);
+		AnimInst->Montage_SetEndDelegate(EndDelegate);
+
+		// 2) 兜底定时器：动画卡住时强制退出
+		FTimerHandle FallbackTimer;
+		GetWorldTimerManager().SetTimer(
+			FallbackTimer, this, &AAuraCharacter::OnDeathTimerExpired,
+			DeathAnimationDuration, false);
+	}
+	else
+	{
+		// 没设动画：直接退出
+		HandleDeathFinished(nullptr, false);
+	}
+}
+
+void AAuraCharacter::HandleDeathFinished(UAnimMontage* Montage, bool bInterrupted)
+{
+	// 防止 Montage 回调 + 兜底定时器都触发，重复退出
+	if (bHasQuitted) return;
+	bHasQuitted = true;
+
+	if (APlayerController* PC = Cast<APlayerController>(GetController()))
+	{
+		UKismetSystemLibrary::QuitGame(GetWorld(), PC, EQuitPreference::Quit, false);
+	}
+}
+
+void AAuraCharacter::OnDeathTimerExpired()
+{
+	// 包装一下：把无参签名转成 HandleDeathFinished 的 (UAnimMontage*, bool) 签名
+	HandleDeathFinished(nullptr, false);
+}
