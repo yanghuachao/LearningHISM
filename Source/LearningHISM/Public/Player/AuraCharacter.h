@@ -7,11 +7,13 @@
 #include "Character/MonsterBase.h"
 #include "Fireball/Fireball.h"
 #include "GameFramework/Character.h"
+#include "Upgrade/UpgradeLibrary.h"
 #include "AuraCharacter.generated.h"
 
 class USpringArmComponent; // 新增
 class UCameraComponent;    // 新增
 
+class UUpgradeLibrary;
 
 // 血量变化时广播：UI 监听
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnHealthChanged, float, CurrentHealth, float, MaxHealth);
@@ -59,7 +61,7 @@ public:
 	// Sets default values for this character's properties
 	AAuraCharacter();
 
-protected:
+public:
 	// Called when the game starts or when spawned
 	virtual void BeginPlay() override;
 	
@@ -190,6 +192,53 @@ protected:
 	// 防止 Montage 结束回调 和 兜底定时器 都触发，导致 QuitGame 调 2 次
 	bool bHasQuitted = false;
 	
+	
+	// === 升级系统 ===
+
+	// 数据源：在 BP_AuraCharacter 里指定 BP_UpgradeLibrary 资产
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Upgrades")
+	TObjectPtr<UUpgradeLibrary> UpgradeLibrary = nullptr;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Upgrades")
+	TArray<FUpgradeData> CurrentOptions;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Upgrades")
+	bool bIsShowingUpgrades = false;
+	
+	// ---- 乘区（升级会改这些） ----
+
+	// 基础值（BP 里配，默认 100）
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Combat")
+	float BaseFireballDamage = 100.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Combat")
+	float BaseFireballRadius = 100.f;
+
+	// 当前生效值（升级时刷新，spawn 时只读）
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat")
+	float CurrentFireballDamage = 100.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat")
+	float CurrentFireballRadius = 100.f;
+	
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Upgrades|Stats")
+	float DamageMultiplier = 1.0f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Upgrades|Stats")
+	float MoveSpeedMultiplier = 1.0f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Upgrades|Stats")
+	float CooldownMultiplier = 1.0f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Upgrades|Stats")
+	float MagnetRangeMultiplier = 1.0f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Upgrades|Stats")
+	float AreaMultiplier = 1.0f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Upgrades|Stats")
+	float MaxHealthBonus = 0.0f;
+	
 public:	
 	// Called every frame
 	virtual void Tick(float DeltaTime) override;
@@ -224,7 +273,7 @@ public:
 	// 死亡动画结束回调（被 Montage_SetEndDelegate 调用）
 	void HandleDeathFinished(UAnimMontage* Montage, bool bInterrupted);
 
-	// 兜底定时器到期回调（无参，给 SetTimer 用）
+	// 兜底定时器到期回调（无参，给 SetTimer用）
 	void OnDeathTimerExpired();
 
 	// 内部：缓存 MonsterManager 引用，避免每帧 GetActorOfClass
@@ -234,6 +283,12 @@ public:
 	// 内部：接触伤害 CD 计时器
 	float ContactDamageTimer = 0.0f;
 	
+	void PresentUpgradeOptions();
 	
+	UFUNCTION()
+	void HandleLevelUp(int32 NewLevel, int32 CurrentXP);
+	
+	void ChooseUpgrade(int32 Index);
+	void ApplyUpgrade(const FUpgradeData& Upgrade);
 
 };

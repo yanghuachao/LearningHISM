@@ -29,6 +29,9 @@ public:
 	// 伤害值
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat")
 	float DamageAmount = 100.f;
+	//伤害范围
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat")
+	float HitRadius = 100.f;
 
 	// 碰撞重叠事件回调函数
 	UFUNCTION()

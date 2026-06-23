@@ -239,8 +239,9 @@ void AMonsterBase::ApplyDamageToMonsters(FVector HitLocation, float HitRadius, f
 					// 死亡时广播，让 XPGemManager 在死亡位置生成宝石
 					OnMonsterDied.Broadcast(MonsterDataArray[i].Location, 5.0f);
 					
-					if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red,
+					/*if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red,
 	FString::Printf(TEXT("[Monster Died] at %s"), *MonsterDataArray[i].Location.ToString()));
+	*/
 					
 					// 【假装销毁】将其 Transform 移动到地下极深处，缩放清零
 					FTransform DeadTransform;

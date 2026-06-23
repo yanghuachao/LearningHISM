@@ -14,6 +14,7 @@
 #include "Components/SkeletalMeshComponent.h"
 #include "Animation/AnimMontage.h"
 #include "TimerManager.h"
+#include "Game/LearningHISMGameState.h"
 
 class UEnhancedInputLocalPlayerSubsystem;
 // Sets default values
@@ -88,6 +89,19 @@ void AAuraCharacter::BeginPlay()
 			UGameplayStatics::GetActorOfClass(GetWorld(), AMonsterBase::StaticClass())))
 	{
 		CachedMonsterManager = MonsterMgr;
+	}
+	
+	if (!UpgradeLibrary)
+	{
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Red,
+				TEXT("[Aura] 警告：UpgradeLibrary 没设置，升级系统不会工作"));
+		}
+	}
+	if (ALearningHISMGameState* GS = GetWorld()->GetGameState<ALearningHISMGameState>())
+	{
+		GS->OnLevelUp.AddDynamic(this, &AAuraCharacter::HandleLevelUp);
 	}
 }
 
@@ -191,6 +205,7 @@ void AAuraCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCompo
 		{
 			EnhancedInputComponent->BindAction(SwitchNextAction, ETriggerEvent::Started, this, &AAuraCharacter::SwitchNextSkill);
 		}
+		
 	}
 	
 }
@@ -240,6 +255,8 @@ void AAuraCharacter::SwitchNextSkill(const FInputActionValue& Value)
 
 void AAuraCharacter::Attack(const FInputActionValue& Value)
 {
+	// ★ 升级选择中：忽略 LMB，避免点击卡片同时触发火球
+	if (bIsShowingUpgrades) return;
 	
 	if (bIsAutoCasting) {
 		bIsAutoCasting = false;
@@ -286,11 +303,11 @@ void AAuraCharacter::ToggleAutoCast()
 	bIsAutoCasting = !bIsAutoCasting;
     
 	// 打印状态方便测试
-	if (GEngine)
+	/*if (GEngine)
 	{
 		FString Status = bIsAutoCasting ? TEXT("开启") : TEXT("关闭");
 		GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Cyan, FString::Printf(TEXT("自动施法已 %s!"), *Status));
-	}
+	}*/
 }
 
 //实际技能生成
@@ -330,14 +347,14 @@ void AAuraCharacter::ExecuteSkillSpawn()
 				bHasTarget = true;
 			}
 		}
-		// 可视化范围圈（验证用，确认后可以删掉）
+		/*// 可视化范围圈（验证用，确认后可以删掉）
 		DrawDebugCircle(
 			GetWorld(),
 			GetActorLocation() - FVector(0, 0, GetActorLocation().Z), // 贴地
 			AutoAttackRange,
 			32, FColor::Cyan, false, 0.5f, 0, 2.f,
 			FVector(1, 0, 0), FVector(0, 1, 0), false
-		);
+		);*/
 	}
 	else
 	{
@@ -357,9 +374,10 @@ void AAuraCharacter::ExecuteSkillSpawn()
 	FlatDirection = FlatDirection.GetSafeNormal();
 	FRotator SpawnRotation = FlatDirection.Rotation();
 
-	// 5. 调试可视化
+	/*// 5. 调试可视化
 	DrawDebugSphere(GetWorld(), SpawnLocation, 25.f, 16, FColor::Red, false, 2.f);
 	DrawDebugLine(GetWorld(), SpawnLocation, TargetLocation, FColor::Green, false, 2.f, 0, 5.f);
+	*/
 
 	
 	// 5. 在世界中生成火球（或冰锥、闪电等）
@@ -367,7 +385,21 @@ void AAuraCharacter::ExecuteSkillSpawn()
 	SpawnParams.Owner = this;
 	SpawnParams.Instigator = this;
 	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-	GetWorld()->SpawnActor<AActor>(PendingSkill.SkillClass, SpawnLocation, SpawnRotation, SpawnParams);
+	
+	AActor* Spawned =GetWorld()->SpawnActor<AActor>(PendingSkill.SkillClass, SpawnLocation, SpawnRotation, SpawnParams);
+	
+	if (AFireball* Fireball = Cast<AFireball>(Spawned))
+	{
+		Fireball->DamageAmount = CurrentFireballDamage;   // ← 改赋值，不用 *= 了
+		Fireball->HitRadius    = CurrentFireballRadius;   // ← 改赋值
+
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Yellow,
+				FString::Printf(TEXT("[Spawn] Mult(Dmg=%.2f Area=%.2f) -> Fireball(HP=%.1f DMG=%.1f)"),
+					DamageMultiplier, AreaMultiplier, Fireball->HitRadius, Fireball->DamageAmount));
+		}
+	}
 
 	// 6. 发射完毕，清空暂存区
 	PendingSkill.SkillClass = nullptr;
@@ -482,4 +514,101 @@ void AAuraCharacter::OnDeathTimerExpired()
 {
 	// 包装一下：把无参签名转成 HandleDeathFinished 的 (UAnimMontage*, bool) 签名
 	HandleDeathFinished(nullptr, false);
+}
+
+void AAuraCharacter::PresentUpgradeOptions()
+{
+	if (!UpgradeLibrary || bIsShowingUpgrades) return;
+
+	CurrentOptions = UpgradeLibrary->PickRandom(3);
+	if (CurrentOptions.Num() == 0) return;
+
+	bIsShowingUpgrades = true;
+
+	// ★ 暂停游戏：怪物/技能/角色全部冻结
+	UGameplayStatics::SetGamePaused(GetWorld(), true);
+
+	if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Yellow,
+			TEXT("=== 升级 ==="));
+	}
+}
+
+void AAuraCharacter::HandleLevelUp(int32 NewLevel, int32 CurrentXP)
+{
+	if (!UpgradeLibrary) return;
+	PresentUpgradeOptions();
+}
+
+
+void AAuraCharacter::ChooseUpgrade(int32 Index)
+{
+	if (!CurrentOptions.IsValidIndex(Index)) return;
+
+	FUpgradeData Chosen = CurrentOptions[Index];
+	ApplyUpgrade(Chosen);
+
+	if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Green,
+			FString::Printf(TEXT("选中了: %s"), *Chosen.DisplayName));
+	}
+
+	CurrentOptions.Empty();
+	bIsShowingUpgrades = false;
+
+	// ★ 恢复游戏
+	UGameplayStatics::SetGamePaused(GetWorld(), false);
+}
+
+void AAuraCharacter::ApplyUpgrade(const FUpgradeData& Upgrade)
+{
+	switch (Upgrade.Type)
+	{
+	case EUpgradeType::Damage:
+		DamageMultiplier += Upgrade.Magnitude;
+		CurrentFireballDamage = BaseFireballDamage * DamageMultiplier;  // ← 立刻算好
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Cyan,
+				FString::Printf(TEXT("[Upgrade] Damage card: x%.2f -> CurrentFireballDamage=%.1f"),
+					DamageMultiplier, CurrentFireballDamage));
+		}
+		break;
+
+	case EUpgradeType::MoveSpeed:
+		MoveSpeedMultiplier += Upgrade.Magnitude;
+		if (GetCharacterMovement())
+		{
+			GetCharacterMovement()->MaxWalkSpeed *= (1.0f + Upgrade.Magnitude);
+		}
+		break;
+
+	case EUpgradeType::MaxHealth:
+		MaxHealthBonus += Upgrade.Magnitude;
+		MaxHealth = 100.0f + MaxHealthBonus;
+		CurrentHealth = FMath::Min(CurrentHealth + Upgrade.Magnitude, MaxHealth);
+		OnHealthChanged.Broadcast(CurrentHealth, MaxHealth);
+		break;
+
+	case EUpgradeType::Cooldown:
+		CooldownMultiplier += Upgrade.Magnitude;
+		break;
+
+	case EUpgradeType::MagnetRange:
+		MagnetRangeMultiplier += Upgrade.Magnitude;
+		break;
+
+	case EUpgradeType::Area:
+		AreaMultiplier += Upgrade.Magnitude;
+		CurrentFireballRadius = BaseFireballRadius * AreaMultiplier;    // ← 立刻算好
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Cyan,
+				FString::Printf(TEXT("[Upgrade] Area card: x%.2f -> CurrentFireballRadius=%.1f"),
+					AreaMultiplier, CurrentFireballRadius));
+		}
+		break;
+	}
 }

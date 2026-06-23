@@ -217,16 +217,17 @@ void AFXPGemData::CollectAllGems()
 void AFXPGemData::HandleMonsterDied(FVector Location, float XPReward)
 {
 	
-	if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Cyan,
-		FString::Printf(TEXT("[Gem] SpawnGem at %s, +%.0f XP"), *Location.ToString(), XPReward));
+	/*if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Cyan,
+		FString::Printf(TEXT("[Gem] SpawnGem at %s, +%.0f XP"), *Location.ToString(), XPReward));*/
 	
 	SpawnGem(Location, XPReward);
 }
 
 void AFXPGemData::HandleXPGemCollected(float XPReward)
 {
-	if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Magenta,
+	/*if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Magenta,
 		FString::Printf(TEXT("[Gem Picked] +%.0f XP"), XPReward));
+		*/
 	
 	if (ALearningHISMGameState* GS = GetWorld()->GetGameState<ALearningHISMGameState>())
 	{

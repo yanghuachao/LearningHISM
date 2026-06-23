@@ -1,4 +1,4 @@
-// Fill out your copyright notice in the Description page of Project Settings.
+﻿// Fill out your copyright notice in the Description page of Project Settings.
 
 
 #include "Fireball/Fireball.h"
@@ -57,10 +57,10 @@ void AFireball::OnSphereOverlap(UPrimitiveComponent* OverlappedComponent, AActor
 	if (OtherActor && OtherActor != this && OtherActor != GetInstigator())
 	{
 		
-		if (GEngine)
+		/*if (GEngine)
 		{
 			GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Yellow, FString::Printf(TEXT("火球撞到了: %s"), *OtherActor->GetName()));
-		}
+		}*/
 		
 		// 尝试将碰到的物体转换为我们的怪物管理器
 		AMonsterBase* MonsterManager = Cast<AMonsterBase>(OtherActor);
@@ -68,9 +68,16 @@ void AFireball::OnSphereOverlap(UPrimitiveComponent* OverlappedComponent, AActor
 		if (MonsterManager)
 		{
 			// 2. 打印确认成功转换
-			if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Green, TEXT("成功命中怪物管理器！触发伤害。"));
+			//if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Green, TEXT("成功命中怪物管理器！触发伤害。"));
             
-			MonsterManager->ApplyDamageToMonsters(GetActorLocation(), 100.0f, DamageAmount);
+			MonsterManager->ApplyDamageToMonsters(GetActorLocation(), HitRadius, DamageAmount);
+
+			if (GEngine)
+			{
+				GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Red,
+					FString::Printf(TEXT("[Hit] Fireball dealt %.1f dmg (radius=%.1f) at %s"),
+						DamageAmount, HitRadius, *GetActorLocation().ToCompactString()));
+			}
             
 			// 3. 只有打中怪物，火球才销毁自己
 			Destroy();
